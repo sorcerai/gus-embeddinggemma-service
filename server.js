@@ -26,44 +26,46 @@ const subscriber = redisClient.duplicate();
 // Note: DATABASE_URL not needed - this service only generates embeddings
 // n8n workflows handle all database operations
 
-// Load EmbeddingGemma-300M model for embeddings
-// NOTE: This is a gated model on HuggingFace
-// You must:
-// 1. Accept the model license at https://huggingface.co/google/embeddinggemma-300m
-// 2. Create a HuggingFace token at https://huggingface.co/settings/tokens
-// 3. Set HF_TOKEN environment variable in Railway
-let embeddingModel = null;
-async function initializeModel() {
-  try {
-    console.log('Loading EmbeddingGemma-300M model...');
+// Use HuggingFace Inference API for EmbeddingGemma-300M
+// This avoids the gated model issue with @xenova/transformers
+const HF_API_URL = 'https://api-inference.huggingface.co/pipeline/feature-extraction/google/embeddinggemma-300m';
+const HF_TOKEN = process.env.HF_TOKEN;
 
-    // Set HF token if provided
-    if (process.env.HF_TOKEN) {
-      process.env.HF_ACCESS_TOKEN = process.env.HF_TOKEN;
-      console.log('HuggingFace token configured');
-    } else {
-      console.warn('WARNING: HF_TOKEN not set - model download may fail for gated models');
-    }
-
-    embeddingModel = await pipeline('feature-extraction', 'google/embeddinggemma-300m');
-    console.log('EmbeddingGemma-300M model loaded successfully (768 dimensions)');
-  } catch (error) {
-    console.error('Failed to load EmbeddingGemma model:', error);
-    console.error('Make sure you:');
-    console.error('1. Accepted license at https://huggingface.co/google/embeddinggemma-300m');
-    console.error('2. Set HF_TOKEN environment variable with your HuggingFace token');
-    process.exit(1);
-  }
+if (!HF_TOKEN) {
+  console.error('FATAL: HF_TOKEN environment variable is required for EmbeddingGemma');
+  console.error('Get your token at: https://huggingface.co/settings/tokens');
+  process.exit(1);
 }
 
-// Generate embedding for text
+async function initializeModel() {
+  console.log('Using HuggingFace Inference API for EmbeddingGemma-300M (768d)');
+  console.log('No local model download required - calls HF API');
+}
+
+// Generate embedding via HuggingFace API
 async function generateEmbedding(text) {
-  if (!embeddingModel) {
-    throw new Error('Embedding model not loaded');
+  const response = await fetch(HF_API_URL, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${HF_TOKEN}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ inputs: text })
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`HuggingFace API error: ${response.status} - ${error}`);
   }
-  
-  const output = await embeddingModel(text, { pooling: 'mean', normalize: true });
-  return Array.from(output.data);
+
+  const embedding = await response.json();
+
+  // HF API returns array directly for feature-extraction
+  if (Array.isArray(embedding) && embedding.length === 768) {
+    return embedding;
+  }
+
+  throw new Error(`Unexpected embedding format: expected 768d array, got ${typeof embedding}`);
 }
 
 // Map to hold active SSE response objects for this instance
