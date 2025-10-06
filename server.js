@@ -27,14 +27,31 @@ const subscriber = redisClient.duplicate();
 // n8n workflows handle all database operations
 
 // Load EmbeddingGemma-300M model for embeddings
+// NOTE: This is a gated model on HuggingFace
+// You must:
+// 1. Accept the model license at https://huggingface.co/google/embeddinggemma-300m
+// 2. Create a HuggingFace token at https://huggingface.co/settings/tokens
+// 3. Set HF_TOKEN environment variable in Railway
 let embeddingModel = null;
 async function initializeModel() {
   try {
     console.log('Loading EmbeddingGemma-300M model...');
+
+    // Set HF token if provided
+    if (process.env.HF_TOKEN) {
+      process.env.HF_ACCESS_TOKEN = process.env.HF_TOKEN;
+      console.log('HuggingFace token configured');
+    } else {
+      console.warn('WARNING: HF_TOKEN not set - model download may fail for gated models');
+    }
+
     embeddingModel = await pipeline('feature-extraction', 'google/embeddinggemma-300m');
     console.log('EmbeddingGemma-300M model loaded successfully (768 dimensions)');
   } catch (error) {
     console.error('Failed to load EmbeddingGemma model:', error);
+    console.error('Make sure you:');
+    console.error('1. Accepted license at https://huggingface.co/google/embeddinggemma-300m');
+    console.error('2. Set HF_TOKEN environment variable with your HuggingFace token');
     process.exit(1);
   }
 }
