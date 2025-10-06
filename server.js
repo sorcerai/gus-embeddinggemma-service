@@ -13,15 +13,9 @@ import { pipeline } from '@xenova/transformers';
 
 const PORT = process.env.PORT || 3000;
 const REDIS_URL = process.env.REDIS_URL;
-const DATABASE_URL = process.env.DATABASE_URL?.replace(/\s+/g, '');
 
 if (!REDIS_URL) {
   console.error('FATAL: REDIS_URL environment variable is not set.');
-  process.exit(1);
-}
-
-if (!DATABASE_URL) {
-  console.error('FATAL: DATABASE_URL environment variable is not set.');
   process.exit(1);
 }
 
@@ -29,20 +23,8 @@ if (!DATABASE_URL) {
 const redisClient = redis.createClient({ url: REDIS_URL });
 const subscriber = redisClient.duplicate();
 
-// Create PostgreSQL pool
-console.log('DATABASE_URL:', DATABASE_URL);
-const { Pool } = pg;
-
-// Use the full connection string for Neon with channel binding
-const dbConfig = {
-  connectionString: DATABASE_URL,
-  ssl: {
-    rejectUnauthorized: false
-  }
-};
-
-console.log('DB Config:', { ...dbConfig, password: '***' });
-const dbPool = new Pool(dbConfig);
+// Note: DATABASE_URL not needed - this service only generates embeddings
+// n8n workflows handle all database operations
 
 // Load EmbeddingGemma-300M model for embeddings
 let embeddingModel = null;
@@ -365,8 +347,10 @@ async function pushMessageToClient(sessionId, event, data) {
 }
 
 // Load today's complete context: schedule, memories, and medical info
+// NOTE: Disabled - this service only provides embedding generation
+// n8n handles all database operations
 async function loadTodaysContext() {
-  const client = await dbPool.connect();
+  throw new Error('DATABASE_URL not configured - MCP tools disabled');
   try {
     // Get recent conversation memories (last 7 days)
     const memoryQuery = `
@@ -446,8 +430,10 @@ async function loadTodaysContext() {
 }
 
 // Search memory knowledge base using vector similarity
+// NOTE: Disabled - this service only provides embedding generation
+// n8n handles all database operations
 async function searchMemoryKB(query) {
-  const client = await dbPool.connect();
+  throw new Error('DATABASE_URL not configured - MCP tools disabled');
   try {
     // Generate embedding for the search query
     console.log(`Generating embedding for query: "${query}"`);
