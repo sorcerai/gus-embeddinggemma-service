@@ -27,20 +27,29 @@ if not HF_TOKEN:
 # Initialize Redis
 redis_client = redis.from_url(REDIS_URL)
 
+# Login to HuggingFace
+from huggingface_hub import login
+print('Logging into HuggingFace...')
+login(token=HF_TOKEN)
+
 # Load model and tokenizer with authentication
 print('Loading EmbeddingGemma-300M model...')
 model_name = 'google/embeddinggemma-300m'
 
+print('Loading tokenizer...')
 tokenizer = AutoTokenizer.from_pretrained(
     model_name,
-    token=HF_TOKEN
+    token=HF_TOKEN,
+    trust_remote_code=True
 )
 
+print('Loading model...')
 model = AutoModel.from_pretrained(
     model_name,
     token=HF_TOKEN,
     torch_dtype=torch.float16,  # Use FP16 for memory efficiency
-    device_map='auto'  # Automatically use GPU if available
+    device_map='auto',  # Automatically use GPU if available
+    trust_remote_code=True
 )
 
 print(f'EmbeddingGemma-300M model loaded successfully (768 dimensions)')
