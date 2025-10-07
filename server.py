@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """
 EmbeddingGemma-300M Service
-Uses HuggingFace Inference API for reliable production deployment
+Local model loading with PyTorch 2.5.0+ and transformers 4.50.0+
 """
 
 import os
-import json
-import requests
+import torch
 from flask import Flask, request, jsonify
+from transformers import AutoModel, AutoTokenizer
+from huggingface_hub import login
 import redis
 
 app = Flask(__name__)
@@ -26,12 +27,32 @@ if not HF_TOKEN:
 # Initialize Redis
 redis_client = redis.from_url(REDIS_URL)
 
-# HuggingFace Inference API configuration
-HF_API_URL = 'https://api-inference.huggingface.co/pipeline/feature-extraction/google/embeddinggemma-300m'
+# Login to HuggingFace
+print('Logging into HuggingFace...')
+login(token=HF_TOKEN)
 
-print('Using HuggingFace Inference API for EmbeddingGemma-300M')
-print('Model: google/embeddinggemma-300m (768 dimensions)')
-print('API Endpoint:', HF_API_URL)
+# Load model and tokenizer
+print('Loading EmbeddingGemma-300M model...')
+model_name = 'google/embeddinggemma-300m'
+
+print('Loading tokenizer...')
+tokenizer = AutoTokenizer.from_pretrained(
+    model_name,
+    token=HF_TOKEN,
+    trust_remote_code=True
+)
+
+print('Loading model (this may take a few minutes)...')
+model = AutoModel.from_pretrained(
+    model_name,
+    token=HF_TOKEN,
+    torch_dtype=torch.float16,
+    device_map='auto',
+    trust_remote_code=True
+)
+
+print(f'Model loaded successfully on device: {model.device}')
+print('Model produces 768-dimensional embeddings')
 
 @app.route('/health', methods=['GET'])
 def health():
@@ -46,12 +67,13 @@ def health():
         'status': 'healthy',
         'model': 'embeddinggemma-300m',
         'dimensions': 768,
+        'device': str(model.device),
         'redis_connected': redis_connected
     })
 
 @app.route('/generate-embedding', methods=['POST'])
 def generate_embedding():
-    """Generate 768-dimensional embedding via HuggingFace API"""
+    """Generate 768-dimensional embedding locally"""
     try:
         data = request.get_json()
 
@@ -60,38 +82,37 @@ def generate_embedding():
 
         text = data['text']
 
-        # Call HuggingFace Inference API
-        response = requests.post(
-            HF_API_URL,
-            headers={
-                'Authorization': f'Bearer {HF_TOKEN}',
-                'Content-Type': 'application/json'
-            },
-            json={'inputs': text},
-            timeout=30
+        # Tokenize input
+        inputs = tokenizer(
+            text,
+            return_tensors='pt',
+            padding=True,
+            truncation=True,
+            max_length=512
         )
 
-        if not response.ok:
-            error_text = response.text
-            print(f'HF API error: {response.status_code} - {error_text}')
+        # Move inputs to model device
+        inputs = {k: v.to(model.device) for k, v in inputs.items()}
+
+        # Generate embedding
+        with torch.no_grad():
+            outputs = model(**inputs)
+            # Mean pooling over sequence dimension
+            embedding = outputs.last_hidden_state.mean(dim=1).squeeze()
+            # L2 normalization
+            embedding = torch.nn.functional.normalize(embedding, p=2, dim=0)
+
+        # Convert to list and return
+        embedding_list = embedding.cpu().tolist()
+
+        # Validate dimensions
+        if len(embedding_list) != 768:
             return jsonify({
-                'error': f'HuggingFace API error: {response.status_code}',
-                'details': error_text
+                'error': f'Unexpected embedding dimension: {len(embedding_list)}, expected 768'
             }), 500
 
-        embedding = response.json()
+        return jsonify({'embedding': embedding_list})
 
-        # Validate embedding dimensions
-        if isinstance(embedding, list) and len(embedding) == 768:
-            return jsonify({'embedding': embedding})
-        else:
-            print(f'Unexpected embedding format: {type(embedding)}')
-            return jsonify({
-                'error': f'Unexpected embedding format from API'
-            }), 500
-
-    except requests.Timeout:
-        return jsonify({'error': 'HuggingFace API timeout'}), 504
     except Exception as e:
         print(f'Error generating embedding: {e}')
         return jsonify({'error': str(e)}), 500
