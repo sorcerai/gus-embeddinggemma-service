@@ -5,11 +5,20 @@ Local model loading with PyTorch 2.5.0+ and transformers 4.50.0+
 """
 
 import os
+import sys
 import torch
 from flask import Flask, request, jsonify
 from transformers import AutoModel, AutoTokenizer
 from huggingface_hub import login
 import redis
+import logging
+
+# Configure logging to stderr to avoid corrupting HTTP responses
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    stream=sys.stderr
+)
 
 app = Flask(__name__)
 
@@ -47,21 +56,21 @@ if not HF_TOKEN:
 redis_client = redis.from_url(REDIS_URL)
 
 # Login to HuggingFace
-print('Logging into HuggingFace...')
+logging.info('Logging into HuggingFace...')
 login(token=HF_TOKEN)
 
 # Load model and tokenizer
-print('Loading EmbeddingGemma-300M model...')
+logging.info('Loading EmbeddingGemma-300M model...')
 model_name = 'google/embeddinggemma-300m'
 
-print('Loading tokenizer...')
+logging.info('Loading tokenizer...')
 tokenizer = AutoTokenizer.from_pretrained(
     model_name,
     token=HF_TOKEN,
     trust_remote_code=True
 )
 
-print('Loading model (this may take a few minutes)...')
+logging.info('Loading model (this may take a few minutes)...')
 model = AutoModel.from_pretrained(
     model_name,
     token=HF_TOKEN,
@@ -70,8 +79,8 @@ model = AutoModel.from_pretrained(
     trust_remote_code=True
 )
 
-print(f'Model loaded successfully on device: {model.device}')
-print('Model produces 768-dimensional embeddings')
+logging.info(f'Model loaded successfully on device: {model.device}')
+logging.info('Model produces 768-dimensional embeddings')
 
 @app.route('/health', methods=['GET'])
 def health():
@@ -147,14 +156,12 @@ def generate_embedding():
         return jsonify({'embedding': embedding_list}), 200
 
     except Exception as e:
-        print(f'Error generating embedding: {e}')
-        import traceback
-        traceback.print_exc()
+        logging.error(f'Error generating embedding: {e}', exc_info=True)
         return jsonify({
             'error': 'Internal server error',
             'details': str(e)
         }), 500
 
 if __name__ == '__main__':
-    print(f'Starting EmbeddingGemma service on port {PORT}')
+    logging.info(f'Starting EmbeddingGemma service on port {PORT}')
     app.run(host='0.0.0.0', port=PORT)
