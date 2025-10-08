@@ -1,15 +1,13 @@
 #!/usr/bin/env python3
 """
 EmbeddingGemma-300M Service
-Local model loading with PyTorch 2.5.0+ and transformers 4.50.0+
+HuggingFace Inference API version - lightweight, no local model loading
 """
 
 import os
 import sys
-import torch
+import requests
 from flask import Flask, request, jsonify
-from transformers import AutoModel, AutoTokenizer
-from huggingface_hub import login
 import redis
 import logging
 
@@ -63,33 +61,13 @@ if not HF_TOKEN:
 # Initialize Redis
 redis_client = redis.from_url(REDIS_URL)
 
-# Login to HuggingFace
-logging.info('Logging into HuggingFace...')
-login(token=HF_TOKEN)
+# HuggingFace Inference API settings
+HF_API_URL = "https://api-inference.huggingface.co/models/google/embeddinggemma-300m"
+HF_HEADERS = {"Authorization": f"Bearer {HF_TOKEN}"}
 
-# Load model and tokenizer
-logging.info('Loading EmbeddingGemma-300M model...')
-model_name = 'google/embeddinggemma-300m'
-
-logging.info('Loading tokenizer...')
-tokenizer = AutoTokenizer.from_pretrained(
-    model_name,
-    token=HF_TOKEN,
-    trust_remote_code=True
-)
-
-logging.info('Loading model (this may take a few minutes)...')
-model = AutoModel.from_pretrained(
-    model_name,
-    token=HF_TOKEN,
-    torch_dtype=torch.float32,  # Use float32 for CPU compatibility (float16 causes NaN on CPU)
-    device_map='auto',
-    trust_remote_code=True
-)
-
-logging.info(f'Model loaded successfully on device: {model.device}')
-logging.info(f'Model dtype: {model.dtype}')
-logging.info('Model produces 768-dimensional embeddings')
+logging.info('Using HuggingFace Inference API for embeddings')
+logging.info('Model: google/embeddinggemma-300m')
+logging.info('Expected dimensions: 768')
 
 @app.route('/health', methods=['GET'])
 def health():
@@ -103,14 +81,14 @@ def health():
     return jsonify({
         'status': 'healthy',
         'model': 'embeddinggemma-300m',
+        'api': 'huggingface-inference',
         'dimensions': 768,
-        'device': str(model.device),
         'redis_connected': redis_connected
     })
 
 @app.route('/generate-embedding', methods=['POST'])
 def generate_embedding():
-    """Generate 768-dimensional embedding locally"""
+    """Generate 768-dimensional embedding using HuggingFace Inference API"""
     try:
         # Handle JSON parsing errors
         try:
@@ -133,28 +111,28 @@ def generate_embedding():
         if not text.strip():
             return jsonify({'error': 'Text field cannot be empty'}), 400
 
-        # Tokenize input
-        inputs = tokenizer(
-            text,
-            return_tensors='pt',
-            padding=True,
-            truncation=True,
-            max_length=512
-        )
+        # Call HuggingFace Inference API
+        payload = {"inputs": text}
 
-        # Move inputs to model device
-        inputs = {k: v.to(model.device) for k, v in inputs.items()}
+        logging.info(f'Calling HF Inference API for text: {text[:50]}...')
+        response = requests.post(HF_API_URL, headers=HF_HEADERS, json=payload, timeout=30)
 
-        # Generate embedding
-        with torch.no_grad():
-            outputs = model(**inputs)
-            # Mean pooling over sequence dimension
-            embedding = outputs.last_hidden_state.mean(dim=1).squeeze()
-            # L2 normalization
-            embedding = torch.nn.functional.normalize(embedding, p=2, dim=0)
+        if response.status_code != 200:
+            logging.error(f'HF API error: {response.status_code} - {response.text}')
+            return jsonify({
+                'error': 'HuggingFace API error',
+                'details': f'Status {response.status_code}: {response.text[:200]}'
+            }), 500
 
-        # Convert to list and return
-        embedding_list = embedding.cpu().tolist()
+        # Parse the response
+        result = response.json()
+
+        # HF Inference API returns the embedding directly as an array
+        if isinstance(result, list):
+            embedding_list = result
+        else:
+            # Some models return {"embedding": [...]}
+            embedding_list = result.get('embedding', result)
 
         # Validate dimensions
         if len(embedding_list) != 768:
@@ -173,6 +151,18 @@ def generate_embedding():
 
         return jsonify({'embedding': embedding_list}), 200
 
+    except requests.exceptions.Timeout:
+        logging.error('HF Inference API timeout')
+        return jsonify({
+            'error': 'Request timeout',
+            'details': 'HuggingFace API took too long to respond'
+        }), 504
+    except requests.exceptions.RequestException as e:
+        logging.error(f'HF Inference API request error: {e}')
+        return jsonify({
+            'error': 'API request failed',
+            'details': str(e)
+        }), 500
     except Exception as e:
         logging.error(f'Error generating embedding: {e}', exc_info=True)
         return jsonify({
@@ -182,6 +172,7 @@ def generate_embedding():
 
 if __name__ == '__main__':
     logging.info(f'Starting EmbeddingGemma service on port {PORT}')
+    logging.info('Using HuggingFace Inference API (lightweight mode)')
     # Disable Flask development server logging to stdout
     import logging as log_module
     log = log_module.getLogger('werkzeug')
