@@ -82,12 +82,13 @@ logging.info('Loading model (this may take a few minutes)...')
 model = AutoModel.from_pretrained(
     model_name,
     token=HF_TOKEN,
-    torch_dtype=torch.float16,
+    torch_dtype=torch.float32,  # Use float32 for CPU compatibility (float16 causes NaN on CPU)
     device_map='auto',
     trust_remote_code=True
 )
 
 logging.info(f'Model loaded successfully on device: {model.device}')
+logging.info(f'Model dtype: {model.dtype}')
 logging.info('Model produces 768-dimensional embeddings')
 
 @app.route('/health', methods=['GET'])
@@ -159,6 +160,15 @@ def generate_embedding():
         if len(embedding_list) != 768:
             return jsonify({
                 'error': f'Unexpected embedding dimension: {len(embedding_list)}, expected 768'
+            }), 500
+
+        # Check for NaN or Inf values
+        import math
+        if any(math.isnan(x) or math.isinf(x) for x in embedding_list):
+            logging.error(f'Invalid embedding values detected (NaN/Inf). Input text: {text[:100]}')
+            return jsonify({
+                'error': 'Model generated invalid embedding values (NaN/Inf)',
+                'details': 'This may indicate a model configuration issue. Contact support.'
             }), 500
 
         return jsonify({'embedding': embedding_list}), 200
