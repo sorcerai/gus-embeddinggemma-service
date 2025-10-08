@@ -45,3 +45,7 @@ backup/
 # Temporary files
 *.tmp
 *.temp
+
+# Serena MCP local config
+.serena/
+.claude/

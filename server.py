@@ -13,6 +13,25 @@ import redis
 
 app = Flask(__name__)
 
+# Global error handler to ensure JSON responses
+@app.errorhandler(Exception)
+def handle_error(error):
+    """Ensure all errors return JSON"""
+    response = {
+        'error': 'Internal server error',
+        'details': str(error)
+    }
+    return jsonify(response), 500
+
+@app.errorhandler(400)
+def handle_bad_request(error):
+    """Handle bad request errors"""
+    response = {
+        'error': 'Bad request',
+        'details': str(error)
+    }
+    return jsonify(response), 400
+
 # Environment variables
 PORT = int(os.getenv('PORT', 3000))
 REDIS_URL = os.getenv('REDIS_URL')
@@ -75,12 +94,26 @@ def health():
 def generate_embedding():
     """Generate 768-dimensional embedding locally"""
     try:
-        data = request.get_json()
+        # Handle JSON parsing errors
+        try:
+            data = request.get_json(force=True)
+        except Exception as json_error:
+            return jsonify({
+                'error': 'Invalid JSON in request body',
+                'details': str(json_error)
+            }), 400
 
         if not data or 'text' not in data:
             return jsonify({'error': 'Missing "text" field in request'}), 400
 
         text = data['text']
+
+        # Validate text is a string
+        if not isinstance(text, str):
+            return jsonify({'error': 'Text field must be a string'}), 400
+
+        if not text.strip():
+            return jsonify({'error': 'Text field cannot be empty'}), 400
 
         # Tokenize input
         inputs = tokenizer(
@@ -111,11 +144,16 @@ def generate_embedding():
                 'error': f'Unexpected embedding dimension: {len(embedding_list)}, expected 768'
             }), 500
 
-        return jsonify({'embedding': embedding_list})
+        return jsonify({'embedding': embedding_list}), 200
 
     except Exception as e:
         print(f'Error generating embedding: {e}')
-        return jsonify({'error': str(e)}), 500
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'error': 'Internal server error',
+            'details': str(e)
+        }), 500
 
 if __name__ == '__main__':
     print(f'Starting EmbeddingGemma service on port {PORT}')
