@@ -22,6 +22,14 @@ logging.basicConfig(
 
 app = Flask(__name__)
 
+# Disable Flask's default logger to prevent it from writing to stdout
+import logging as flask_logging
+werkzeug_logger = flask_logging.getLogger('werkzeug')
+werkzeug_logger.handlers = []
+werkzeug_logger.addHandler(flask_logging.StreamHandler(sys.stderr))
+app.logger.handlers = []
+app.logger.addHandler(flask_logging.StreamHandler(sys.stderr))
+
 # Global error handler to ensure JSON responses
 @app.errorhandler(Exception)
 def handle_error(error):
@@ -164,4 +172,8 @@ def generate_embedding():
 
 if __name__ == '__main__':
     logging.info(f'Starting EmbeddingGemma service on port {PORT}')
+    # Disable Flask development server logging to stdout
+    import logging as log_module
+    log = log_module.getLogger('werkzeug')
+    log.setLevel(log_module.ERROR)
     app.run(host='0.0.0.0', port=PORT)
